@@ -251,6 +251,26 @@ console.log(fs.existsSync(path.join("a", "b")), sep);`;
     );
   });
 
+  test("colors namespace import identifier in type annotations", () => {
+    const source = `import * as vscode from "vscode";
+
+class Controller implements vscode.Disposable {
+  private decorationTypes: vscode.TextEditorDecorationType[] = [];
+  private readonly disposables: vscode.Disposable[] = [];
+}`;
+    const decorations = collectRainbowDecorations(
+      source,
+      "typescript",
+      "sample.ts",
+      options,
+    );
+
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "vscode"),
+      [0, 0, 0, 0],
+    );
+  });
+
   test("keeps JSX attribute names uncolored while coloring component usage", () => {
     const source = `import { Button } from "./Button";
 

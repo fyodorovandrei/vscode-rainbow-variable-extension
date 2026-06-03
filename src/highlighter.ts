@@ -416,6 +416,70 @@ function collectDecorations(
   const decorations: RainbowDecoration[] = [];
   const seenRanges = new Set<string>();
 
+  /**
+   * Targeted traversal of a TypeNode subtree looking only for import identifier
+   * usages inside TypeReferenceNode positions.
+   *
+   * This runs when the main visitor skips a TypeNode subtree. Instead of
+   * skipping entirely we still want to color e.g. `vscode` in
+   * `vscode.TextEditorDecorationType[]` (ArrayType → TypeReference → QualifiedName).
+   *
+   * Only TypeNode children are recursed into so PropertySignature names and
+   * other structural positions inside inline type literals are never reached.
+   */
+  function visitTypeForImports(
+    node: ts.Node,
+    currentScope: LexicalScope,
+  ): void {
+    if (ts.isTypeReferenceNode(node)) {
+      colorEntityNameImport(node.typeName, currentScope);
+      for (const arg of node.typeArguments ?? []) {
+        visitTypeForImports(arg, currentScope);
+      }
+      return;
+    }
+    if (ts.isTypeNode(node)) {
+      ts.forEachChild(node, (child) =>
+        visitTypeForImports(child, currentScope),
+      );
+    }
+    // Non-TypeNode children (PropertySignature, etc.) are intentionally not visited.
+  }
+
+  /**
+   * Colors the leftmost identifier of an EntityName if it resolves to a
+   * tracked binding. For `vscode.Disposable` (QualifiedName), only `vscode`
+   * is colored — the right side (`Disposable`) is a type name, not a binding.
+   */
+  function colorEntityNameImport(
+    name: ts.EntityName,
+    currentScope: LexicalScope,
+  ): void {
+    if (ts.isQualifiedName(name)) {
+      // Only color the leftmost identifier (the import binding like `vscode`).
+      // The right side is a type name, not a binding.
+      colorEntityNameImport(name.left, currentScope);
+      return;
+    }
+    const declaration = currentScope.resolve(name.text);
+    if (declaration && shouldIncludeDeclaration(declaration, options)) {
+      const start = name.getStart(scopeModel.sourceFile);
+      const end = name.getEnd();
+      const key = `${start}:${end}`;
+      if (!seenRanges.has(key)) {
+        seenRanges.add(key);
+        decorations.push({
+          name: declaration.name,
+          kind: declaration.kind,
+          colorIndex: declaration.colorIndex,
+          declarationId: declaration.declarationId,
+          start,
+          end,
+        });
+      }
+    }
+  }
+
   function visit(node: ts.Node, scope: LexicalScope): void {
     if (isFunctionLikeWithBody(node)) {
       const functionScope = scopeModel.nodeScopes.get(node);
@@ -437,6 +501,11 @@ function collectDecorations(
     }
 
     if (shouldSkipSubtree(node)) {
+      // Even in skipped TypeNode subtrees, search for import usages in type
+      // references so `vscode` in `vscode.Disposable[]` is still colored.
+      if (ts.isTypeNode(node)) {
+        visitTypeForImports(node, scope);
+      }
       return;
     }
 
