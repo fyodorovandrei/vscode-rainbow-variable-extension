@@ -6,6 +6,7 @@ export interface RainbowDecoration {
   readonly name: string;
   readonly kind: RainbowIdentifierKind;
   readonly colorIndex: number;
+  readonly declarationId: number;
   readonly start: number;
   readonly end: number;
 }
@@ -24,6 +25,12 @@ interface DeclarationInfo {
   readonly name: string;
   readonly kind: RainbowIdentifierKind;
   readonly colorIndex: number;
+  readonly allowPropertyAccess: boolean;
+  readonly declarationId: number;
+}
+
+interface DeclarationIdState {
+  nextDeclarationId: number;
 }
 
 /**
@@ -48,6 +55,8 @@ class LexicalScope {
     private readonly functionState: ColorState | undefined,
     private readonly functionBoundary: boolean,
     private readonly importState: ColorState,
+    private readonly sharedVariableState: ColorState,
+    private readonly declarationIdState: DeclarationIdState,
   ) {}
 
   /**
@@ -61,6 +70,8 @@ class LexicalScope {
       { nextColorIndex: 0 },
       true,
       this.importState,
+      this.sharedVariableState,
+      this.declarationIdState,
     );
   }
 
@@ -71,7 +82,29 @@ class LexicalScope {
    * declarations continue the same color sequence as the enclosing function.
    */
   public createLexicalScope(): LexicalScope {
-    return new LexicalScope(this, this.functionState, false, this.importState);
+    return new LexicalScope(
+      this,
+      this.functionState,
+      false,
+      this.importState,
+      this.sharedVariableState,
+      this.declarationIdState,
+    );
+  }
+
+  /**
+   * Creates a child scope that can allocate variable colors without becoming
+   * a function boundary. Used for class/member declaration containers.
+   */
+  public createDeclarationScope(): LexicalScope {
+    return new LexicalScope(
+      this,
+      { nextColorIndex: 0 },
+      false,
+      this.importState,
+      this.sharedVariableState,
+      this.declarationIdState,
+    );
   }
 
   /**
@@ -84,7 +117,11 @@ class LexicalScope {
    *
    * The color index is taken from `functionState.nextColorIndex` and then incremented.
    */
-  public addDeclaration(name: string, kind: RainbowIdentifierKind): void {
+  public addDeclaration(
+    name: string,
+    kind: RainbowIdentifierKind,
+    allowPropertyAccess = false,
+  ): void {
     if (
       !this.functionState ||
       ignoredIdentifiers.has(name) ||
@@ -100,6 +137,8 @@ class LexicalScope {
       name,
       kind,
       colorIndex,
+      allowPropertyAccess,
+      declarationId: this.declarationIdState.nextDeclarationId++,
     });
   }
 
@@ -122,6 +161,30 @@ class LexicalScope {
       name,
       kind: "import",
       colorIndex,
+      allowPropertyAccess: false,
+      declarationId: this.declarationIdState.nextDeclarationId++,
+    });
+  }
+
+  /**
+   * Registers a shared variable-like declaration in the file-wide shared
+   * variable space. Used for type/interface members that should color
+   * corresponding property-access usages.
+   */
+  public addSharedVariableDeclaration(name: string): void {
+    if (ignoredIdentifiers.has(name) || this.declarations.has(name)) {
+      return;
+    }
+
+    const colorIndex = this.sharedVariableState.nextColorIndex;
+    this.sharedVariableState.nextColorIndex += 1;
+
+    this.declarations.set(name, {
+      name,
+      kind: "variable",
+      colorIndex,
+      allowPropertyAccess: true,
+      declarationId: this.declarationIdState.nextDeclarationId++,
     });
   }
 
@@ -223,9 +286,20 @@ export function collectRainbowDecorations(
  * throughout the file regardless of the position of their `import` statement.
  */
 function buildScopeModel(sourceFile: ts.SourceFile): ScopeModel {
-  const rootScope = new LexicalScope(undefined, undefined, false, {
-    nextColorIndex: 0,
-  });
+  const rootScope = new LexicalScope(
+    undefined,
+    undefined,
+    false,
+    {
+      nextColorIndex: 0,
+    },
+    {
+      nextColorIndex: 0,
+    },
+    {
+      nextDeclarationId: 0,
+    },
+  );
   const nodeScopes = new WeakMap<ts.Node, LexicalScope>();
   nodeScopes.set(sourceFile, rootScope);
 
@@ -244,6 +318,22 @@ function buildScopeModel(sourceFile: ts.SourceFile): ScopeModel {
       } else if (ts.isClassDeclaration(node) && node.name) {
         scope.addDeclaration(node.name.text, "variable");
       }
+    }
+
+    if (ts.isClassLike(node)) {
+      const classScope = scope.createDeclarationScope();
+      nodeScopes.set(node, classScope);
+      registerClassMemberDeclarations(node, classScope);
+      ts.forEachChild(node, (child) => visit(child, classScope));
+      return;
+    }
+
+    if (ts.isInterfaceDeclaration(node)) {
+      registerTypeMemberDeclarations(node.members, rootScope);
+    }
+
+    if (ts.isTypeLiteralNode(node)) {
+      registerTypeMemberDeclarations(node.members, rootScope);
     }
 
     if (isFunctionLikeWithBody(node)) {
@@ -350,9 +440,21 @@ function collectDecorations(
       return;
     }
 
-    if (ts.isIdentifier(node) && shouldDecorateIdentifier(node)) {
+    if (ts.isIdentifier(node)) {
+      if (!shouldDecorateIdentifier(node)) {
+        if (!isPropertyAccessName(node)) {
+          ts.forEachChild(node, (child) => visit(child, scope));
+          return;
+        }
+      }
+
       const declaration = scope.resolve(node.text);
       if (declaration && shouldIncludeDeclaration(declaration, options)) {
+        if (isPropertyAccessName(node) && !declaration.allowPropertyAccess) {
+          ts.forEachChild(node, (child) => visit(child, scope));
+          return;
+        }
+
         const start = node.getStart(scopeModel.sourceFile);
         const end = node.getEnd();
         const key = `${start}:${end}`;
@@ -363,6 +465,7 @@ function collectDecorations(
             name: declaration.name,
             kind: declaration.kind,
             colorIndex: declaration.colorIndex,
+            declarationId: declaration.declarationId,
             start,
             end,
           });
@@ -517,8 +620,11 @@ function isHeritageTypeReference(node: ts.Node): boolean {
  * (parameter, local variable, or import) and is used as a *value reference*.
  * The checks below strip every position where the identifier is a structural
  * part of syntax rather than a reference — e.g. a property key, a type name,
- * a label, or a JSX attribute name — so those positions are left untouched by
- * the extension and continue to show the theme color.
+ * a label, or a JSX attribute name.
+ *
+ * Property-access names (`obj.member`) are handled separately in
+ * `collectDecorations`: they are colored only when `member` resolves to a
+ * registered class/type member declaration.
  */
 function shouldDecorateIdentifier(identifier: ts.Identifier): boolean {
   if (!identifier.parent) {
@@ -537,10 +643,12 @@ function shouldDecorateIdentifier(identifier: ts.Identifier): boolean {
 }
 
 /**
- * Returns true when the identifier is the *property* side of a member expression,
- * not the object being accessed.
- *   `obj.prop`   → `prop` is excluded; `obj` is still decorated.
- *   `Ns.Type`    → `Type` is excluded (qualified name right side).
+ * Returns true when the identifier is the right-hand side of a property access
+ * (`obj.prop`) or qualified name (`Ns.Type`).
+ *
+ * In the general identifier path these are excluded to prevent accidental name
+ * collisions with local variables. Property-access names are re-introduced by
+ * a dedicated member-aware path in `collectDecorations`.
  */
 function isPropertyAccessName(identifier: ts.Identifier): boolean {
   const { parent } = identifier;
@@ -573,9 +681,7 @@ function isMemberOrTypeLevelDeclarationName(
 ): boolean {
   const { parent } = identifier;
   return (
-    // Class instance / prototype member names: `class C { field = 1; method() {} get x() {} set x(v) {} }`
-    (ts.isPropertyDeclaration(parent) && parent.name === identifier) ||
-    (ts.isPropertySignature(parent) && parent.name === identifier) ||
+    // Class instance / prototype callable names: `class C { method() {} get x() {} set x(v) {} }`
     (ts.isMethodDeclaration(parent) && parent.name === identifier) ||
     (ts.isMethodSignature(parent) && parent.name === identifier) ||
     (ts.isGetAccessorDeclaration(parent) && parent.name === identifier) ||
@@ -710,5 +816,73 @@ function registerImportDeclaration(
 
   for (const importSpecifier of importClause.namedBindings.elements) {
     scope.addImportDeclaration(importSpecifier.name.text);
+  }
+}
+
+/**
+ * Registers class field declarations that should be colorable and match
+ * property-access usages like `this.field`.
+ */
+function registerClassMemberDeclarations(
+  node: ts.ClassLikeDeclaration,
+  scope: LexicalScope,
+): void {
+  for (const member of node.members) {
+    if (ts.isPropertyDeclaration(member)) {
+      registerNamedDeclaration(member.name, scope, true);
+      continue;
+    }
+
+    if (
+      ts.isGetAccessorDeclaration(member) ||
+      ts.isSetAccessorDeclaration(member)
+    ) {
+      registerNamedDeclaration(member.name, scope, true);
+    }
+  }
+}
+
+/**
+ * Registers interface/type-literal member declarations in the shared
+ * file-wide variable space so property-access usages can reuse the same color.
+ */
+function registerTypeMemberDeclarations(
+  members: ts.NodeArray<ts.TypeElement>,
+  scope: LexicalScope,
+): void {
+  for (const member of members) {
+    if (ts.isPropertySignature(member)) {
+      registerNamedSharedDeclaration(member.name, scope);
+      continue;
+    }
+
+    if (ts.isMethodSignature(member)) {
+      registerNamedSharedDeclaration(member.name, scope);
+    }
+  }
+}
+
+/**
+ * Registers an identifier declaration from a named class member.
+ */
+function registerNamedDeclaration(
+  name: ts.PropertyName,
+  scope: LexicalScope,
+  allowPropertyAccess: boolean,
+): void {
+  if (ts.isIdentifier(name)) {
+    scope.addDeclaration(name.text, "variable", allowPropertyAccess);
+  }
+}
+
+/**
+ * Registers an identifier declaration in the shared variable space.
+ */
+function registerNamedSharedDeclaration(
+  name: ts.PropertyName,
+  scope: LexicalScope,
+): void {
+  if (ts.isIdentifier(name)) {
+    scope.addSharedVariableDeclaration(name.text);
   }
 }

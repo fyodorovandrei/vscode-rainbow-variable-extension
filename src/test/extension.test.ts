@@ -156,14 +156,15 @@ console.log(ControlHelper);`;
     );
   });
 
-  test("keeps property and type identifiers uncolored", () => {
-    const source = `type User = { name: string; role: string };
-interface Account { id: string }
+  test("colors type member declarations and matching property access usages", () => {
+    const source = `interface Profile {
+  fullName: string;
+  accountId: string;
+}
 
-function run(user: User): Account {
-	const account: Account = { id: user.name };
-	const role = user.role;
-	return account;
+function run(profile: Profile) {
+  const value = profile.fullName;
+  return profile.accountId + value.length;
 }`;
     const decorations = collectRainbowDecorations(
       source,
@@ -172,11 +173,41 @@ function run(user: User): Account {
       options,
     );
 
-    assert.deepStrictEqual(namesWithColor(source, decorations, "name"), []);
-    assert.deepStrictEqual(namesWithColor(source, decorations, "id"), []);
-    assert.deepStrictEqual(namesWithColor(source, decorations, "User"), []);
-    assert.deepStrictEqual(namesWithColor(source, decorations, "Account"), []);
-    assert.deepStrictEqual(namesWithColor(source, decorations, "role"), [2]);
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "fullName"),
+      [0, 0],
+    );
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "accountId"),
+      [1, 1],
+    );
+    assert.deepStrictEqual(namesWithColor(source, decorations, "Profile"), []);
+  });
+
+  test("colors class field declarations and matching property access usages", () => {
+    const source = `class Settings {
+	private enabled = true;
+	private palette = ["red"];
+
+	public isReady() {
+		return this.enabled && this.palette.length > 0;
+	}
+}`;
+    const decorations = collectRainbowDecorations(
+      source,
+      "typescript",
+      "sample.ts",
+      options,
+    );
+
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "enabled"),
+      [0, 0],
+    );
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "palette"),
+      [1, 1],
+    );
   });
 
   test("colors only local import names, not imported source names", () => {

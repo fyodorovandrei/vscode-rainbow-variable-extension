@@ -3,7 +3,13 @@ import { clearTimeout, setTimeout } from "node:timers";
 import {
   collectRainbowDecorations,
   RainbowAnalysisOptions,
+  RainbowDecoration,
 } from "./highlighter";
+import packageJson from "../package.json";
+
+const DEFAULT_COLORS: string[] =
+  packageJson.contributes.configuration.properties["rainbowVariables.colors"]
+    .default;
 
 interface RainbowConfiguration extends RainbowAnalysisOptions {
   readonly enabled: boolean;
@@ -134,11 +140,12 @@ class RainbowVariablesController implements vscode.Disposable {
       editor.document.fileName,
       this.configuration,
     );
+
+    this.ensureDecorationTypesForDecorations(decorations);
     const rangesByColor = this.decorationTypes.map((): vscode.Range[] => []);
 
     for (const decoration of decorations) {
-      const decorationTypeIndex =
-        decoration.colorIndex % this.decorationTypes.length;
+      const decorationTypeIndex = decoration.declarationId;
       rangesByColor[decorationTypeIndex].push(
         new vscode.Range(
           editor.document.positionAt(decoration.start),
@@ -181,15 +188,63 @@ class RainbowVariablesController implements vscode.Disposable {
   private rebuildDecorationTypes(): void {
     this.disposeDecorationTypes();
 
-    this.decorationTypes = this.configuration.colors
-      .filter((color) => color.trim().length > 0)
-      .map((color) =>
+    this.ensureDecorationTypes(this.configuration.colors.length - 1);
+  }
+
+  private ensureDecorationTypesForDecorations(
+    decorations: readonly RainbowDecoration[],
+  ): void {
+    let highestDeclarationId = -1;
+
+    for (const decoration of decorations) {
+      if (decoration.declarationId > highestDeclarationId) {
+        highestDeclarationId = decoration.declarationId;
+      }
+    }
+
+    this.ensureDecorationTypes(highestDeclarationId);
+  }
+
+  private ensureDecorationTypes(maxIndex: number): void {
+    if (maxIndex < 0) {
+      return;
+    }
+
+    while (this.decorationTypes.length <= maxIndex) {
+      const color = this.getColorForDecorationIndex(
+        this.decorationTypes.length,
+      );
+      this.decorationTypes.push(
         vscode.window.createTextEditorDecorationType({
           color,
           fontWeight: this.configuration.fontWeight,
           rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
         }),
       );
+    }
+  }
+
+  private getColorForDecorationIndex(index: number): string {
+    const configuredColors = this.configuration.colors.filter(
+      (color) => color.trim().length > 0,
+    );
+
+    if (index < configuredColors.length) {
+      return configuredColors[index];
+    }
+
+    const generatedIndex = index - configuredColors.length;
+
+    // Skip red/orange/yellow range (0-60°) to avoid confusion with error/warning colors.
+    // Use a golden-angle distribution over the safe range (60-360°).
+    const safeHueRange = 300; // degrees (360 - 60)
+    const baseHue = 60; // start after red/orange/yellow
+    const hue = Math.floor((generatedIndex * 137.508) % safeHueRange) + baseHue;
+
+    const saturation = 70;
+    const lightness = 55 + ((generatedIndex % 4) - 1) * 6;
+
+    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
   }
 
   private disposeDecorationTypes(): void {
@@ -231,16 +286,7 @@ function readConfiguration(): RainbowConfiguration {
 
   return {
     enabled: configuration.get("enabled", true),
-    colors: configuration.get("colors", [
-      "#e06c75",
-      "#d19a66",
-      "#e5c07b",
-      "#98c379",
-      "#56b6c2",
-      "#61afef",
-      "#c678dd",
-      "#be5046",
-    ]),
+    colors: configuration.get("colors", DEFAULT_COLORS),
     fontWeight: configuration.get("fontWeight", "600"),
     includeParameters: configuration.get("includeParameters", true),
     includeVariables: configuration.get("includeVariables", true),
