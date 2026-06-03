@@ -479,15 +479,34 @@ function isFunctionLikeWithBody(
  *
  * Skipping these subtrees avoids false positives where a type annotation
  * happens to reference an identifier whose name matches a local variable.
- * Covers: type nodes, `type` aliases, `interface` declarations, and
- * `export` declarations (whose specifiers are excluded by `isExportSpecifierName`).
+ * Covers: type nodes, `type` aliases, and `export` declarations (whose
+ * specifiers are excluded by `isExportSpecifierName`).
+ *
+ * Note: heritage references (`extends` / `implements`) are intentionally kept
+ * visitable so imported types used there can still be colored.
  */
 function shouldSkipSubtree(node: ts.Node): boolean {
+  if (isHeritageTypeReference(node)) {
+    return false;
+  }
+
   return (
     ts.isTypeNode(node) ||
     ts.isTypeAliasDeclaration(node) ||
-    ts.isInterfaceDeclaration(node) ||
     ts.isExportDeclaration(node)
+  );
+}
+
+/**
+ * Returns true when `node` is the type reference in a class/interface heritage
+ * clause, e.g. `interface A extends B {}` or `class X implements Y {}`.
+ *
+ * Even though this is type-position syntax, we keep it traversable so imported
+ * names used as heritage bases remain eligible for rainbow coloring.
+ */
+function isHeritageTypeReference(node: ts.Node): boolean {
+  return (
+    ts.isExpressionWithTypeArguments(node) && ts.isHeritageClause(node.parent)
   );
 }
 

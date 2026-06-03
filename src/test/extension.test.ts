@@ -119,6 +119,25 @@ console.log(React, items);`;
     assert.deepStrictEqual(namesWithColor(source, decorations, "path"), [3, 3]);
   });
 
+  test("colors imported type used in interface extends clause", () => {
+    const source = `import { RainbowAnalysisOptions } from "./highlighter";
+
+interface RainbowConfiguration extends RainbowAnalysisOptions {
+	readonly enabled: boolean;
+}`;
+    const decorations = collectRainbowDecorations(
+      source,
+      "typescript",
+      "sample.ts",
+      options,
+    );
+
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "RainbowAnalysisOptions"),
+      [0, 0],
+    );
+  });
+
   test("colors imported component names inside JSX tags", () => {
     const source = `import { ControlHelper } from "./ControlHelper";
 
