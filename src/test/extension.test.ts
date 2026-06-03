@@ -118,6 +118,150 @@ console.log(React, items);`;
     );
     assert.deepStrictEqual(namesWithColor(source, decorations, "path"), [3, 3]);
   });
+
+  test("colors imported component names inside JSX tags", () => {
+    const source = `import { ControlHelper } from "./ControlHelper";
+
+const View = () => <ControlHelper value={1} />;
+console.log(ControlHelper);`;
+    const decorations = collectRainbowDecorations(
+      source,
+      "typescriptreact",
+      "sample.tsx",
+      options,
+    );
+
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "ControlHelper"),
+      [0, 0, 0],
+    );
+  });
+
+  test("keeps property and type identifiers uncolored", () => {
+    const source = `type User = { name: string; role: string };
+interface Account { id: string }
+
+function run(user: User): Account {
+	const account: Account = { id: user.name };
+	const role = user.role;
+	return account;
+}`;
+    const decorations = collectRainbowDecorations(
+      source,
+      "typescript",
+      "sample.ts",
+      options,
+    );
+
+    assert.deepStrictEqual(namesWithColor(source, decorations, "name"), []);
+    assert.deepStrictEqual(namesWithColor(source, decorations, "id"), []);
+    assert.deepStrictEqual(namesWithColor(source, decorations, "User"), []);
+    assert.deepStrictEqual(namesWithColor(source, decorations, "Account"), []);
+    assert.deepStrictEqual(namesWithColor(source, decorations, "role"), [2]);
+  });
+
+  test("colors only local import names, not imported source names", () => {
+    const source = `import { readFile as read, writeFile } from "node:fs/promises";
+
+function run(path: string) {
+	return read(path).then(() => writeFile(path, "ok"));
+}`;
+    const decorations = collectRainbowDecorations(
+      source,
+      "typescript",
+      "sample.ts",
+      options,
+    );
+
+    assert.deepStrictEqual(namesWithColor(source, decorations, "read"), [0, 0]);
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "writeFile"),
+      [1, 1],
+    );
+    assert.deepStrictEqual(namesWithColor(source, decorations, "readFile"), []);
+  });
+
+  test("colors import-equals local name and namespace import usages", () => {
+    const source = `import fs = require("node:fs");
+import * as path from "node:path";
+
+const sep = path.sep;
+console.log(fs.existsSync(path.join("a", "b")), sep);`;
+    const decorations = collectRainbowDecorations(
+      source,
+      "typescript",
+      "sample.ts",
+      options,
+    );
+
+    assert.deepStrictEqual(namesWithColor(source, decorations, "fs"), [0, 0]);
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "path"),
+      [1, 1, 1],
+    );
+  });
+
+  test("keeps JSX attribute names uncolored while coloring component usage", () => {
+    const source = `import { Button } from "./Button";
+
+const View = () => <Button label="Save" value={1} />;
+console.log(Button);`;
+    const decorations = collectRainbowDecorations(
+      source,
+      "typescriptreact",
+      "sample.tsx",
+      options,
+    );
+
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "Button"),
+      [0, 0, 0],
+    );
+    assert.deepStrictEqual(namesWithColor(source, decorations, "label"), []);
+    assert.deepStrictEqual(namesWithColor(source, decorations, "value"), []);
+  });
+
+  test("keeps labels and control-flow labels uncolored", () => {
+    const source = `function run(flag: boolean) {
+	loop: for (let i = 0; i < 3; i += 1) {
+		if (flag) {
+			continue loop;
+		}
+		break loop;
+	}
+}`;
+    const decorations = collectRainbowDecorations(
+      source,
+      "typescript",
+      "sample.ts",
+      options,
+    );
+
+    assert.deepStrictEqual(namesWithColor(source, decorations, "loop"), []);
+    assert.deepStrictEqual(namesWithColor(source, decorations, "i"), [1, 1, 1]);
+    assert.deepStrictEqual(namesWithColor(source, decorations, "flag"), [0, 0]);
+  });
+
+  test("keeps exported alias names uncolored", () => {
+    const source = `const localValue = 1;
+export { localValue as exportedValue };
+console.log(localValue);`;
+    const decorations = collectRainbowDecorations(
+      source,
+      "typescript",
+      "sample.ts",
+      options,
+    );
+
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "exportedValue"),
+      [],
+    );
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "localValue"),
+      [],
+    );
+  });
 });
 
 function namesWithColor(
