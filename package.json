@@ -1,5 +1,5 @@
 {
-  "name": "rainbow-variable-extension",
+  "name": "rainbow-variable",
   "displayName": "Rainbow Variable",
   "description": "Color method parameters and local variables with distinct rainbow colors.",
   "version": "1.0.0",
