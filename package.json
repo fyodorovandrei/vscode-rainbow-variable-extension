@@ -1,5 +1,5 @@
 {
-  "name": "rainbow-variable",
+  "name": "rainbow-variable-extension-for-vscode",
   "displayName": "Rainbow Variable",
   "description": "Color method parameters and local variables with distinct rainbow colors.",
   "version": "1.0.1",
