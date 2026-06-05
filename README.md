@@ -59,8 +59,4 @@ After installing the VSIX, reload VS Code so the new extension host loads the up
 
 The first version uses TypeScript's parser for JavaScript and TypeScript files. Other languages can be added later with language-specific parsers or token providers.
 
-## Release Notes
-
-### 0.0.1
-
-Initial Rainbow Variables implementation for JavaScript and TypeScript.
+See the [CHANGELOG](CHANGELOG.md) for release history.

@@ -2,8 +2,13 @@
   "name": "rainbow-variables",
   "displayName": "Rainbow Variables",
   "description": "Color method parameters and local variables with distinct rainbow colors.",
-  "version": "0.1.0",
-  "publisher": "local",
+  "version": "1.0.0",
+  "publisher": "fyodorovandrei",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fyodorovandrei/vscode-rainbow-variable-extension.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
