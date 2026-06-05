@@ -1,4 +1,4 @@
-import * as ts from "typescript";
+import ts from "typescript";
 
 export type RainbowIdentifierKind = "parameter" | "variable" | "import";
 
@@ -44,8 +44,9 @@ interface DeclarationIdState {
  * - `importState` — shared across the entire file so every import binding gets a
  *   unique, stable color regardless of where it is used.
  *
- * The root scope has `functionState = undefined`, which prevents top-level
- * declarations (outside any function) from being colored.
+ * The root scope is given its own `functionState` and is treated as a function
+ * boundary so top-level declarations (module-scope `const`/`let`/`var`,
+ * functions, and classes) are colored with their own color sequence.
  */
 class LexicalScope {
   private readonly declarations = new Map<string, DeclarationInfo>();
@@ -111,7 +112,7 @@ class LexicalScope {
    * Registers a parameter or local variable declaration in this scope.
    *
    * No-ops when:
-   * - the scope is the root (no `functionState` — top-level vars are not colored)
+   * - the scope has no `functionState` (cannot allocate a color)
    * - `name` is in the ignored list (`arguments`, `undefined`)
    * - `name` is already declared in this exact scope (prevents duplicate color indices)
    *
@@ -227,9 +228,9 @@ class LexicalScope {
   }
 
   /**
-   * Returns `true` when this scope has an active `functionState`, i.e. it is
-   * inside at least one function body and thus eligible to color declarations.
-   * The root scope returns `false` so top-level declarations are skipped.
+   * Returns `true` when this scope has an active `functionState` and is thus
+   * eligible to color declarations. The root scope now has its own
+   * `functionState`, so top-level declarations are colored too.
    */
   public canColorDeclarations(): boolean {
     return Boolean(this.functionState);
@@ -288,8 +289,10 @@ export function collectRainbowDecorations(
 function buildScopeModel(sourceFile: ts.SourceFile): ScopeModel {
   const rootScope = new LexicalScope(
     undefined,
-    undefined,
-    false,
+    {
+      nextColorIndex: 0,
+    },
+    true,
     {
       nextColorIndex: 0,
     },
@@ -485,6 +488,16 @@ function collectDecorations(
       const functionScope = scopeModel.nodeScopes.get(node);
       if (!functionScope) {
         return;
+      }
+
+      // The declaration-site name resolves in the scope where it was
+      // registered: a function *declaration* name lives in the enclosing
+      // scope, while a named function *expression* binds inside its own scope.
+      if (node.name && ts.isIdentifier(node.name)) {
+        const nameScope = ts.isFunctionDeclaration(node)
+          ? scope
+          : functionScope;
+        visit(node.name, nameScope);
       }
 
       for (const parameter of node.parameters) {

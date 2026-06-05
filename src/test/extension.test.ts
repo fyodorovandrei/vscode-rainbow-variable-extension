@@ -329,7 +329,45 @@ console.log(localValue);`;
     );
     assert.deepStrictEqual(
       namesWithColor(source, decorations, "localValue"),
-      [],
+      [0, 0],
+    );
+  });
+
+  test("colors top-level variable, function, and class declarations", () => {
+    const source = `const DEFAULT_COLORS = ["red"];
+const ignoredIdentifiers = new Set(["x"]);
+
+function helper() {
+	return DEFAULT_COLORS;
+}
+
+class Widget {}
+
+console.log(DEFAULT_COLORS, ignoredIdentifiers, helper, Widget);`;
+    const decorations = collectRainbowDecorations(
+      source,
+      "typescript",
+      "sample.ts",
+      options,
+    );
+
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "DEFAULT_COLORS"),
+      [0, 0, 0],
+    );
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "ignoredIdentifiers"),
+      [1, 1],
+    );
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "helper"),
+      [2, 2],
+    );
+    // The class declaration-site name is a type-level name and stays
+    // uncolored; only the value usage is decorated.
+    assert.deepStrictEqual(
+      namesWithColor(source, decorations, "Widget"),
+      [3],
     );
   });
 });
